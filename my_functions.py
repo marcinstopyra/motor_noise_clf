@@ -16,6 +16,8 @@ from tensorflow.keras import Input
 from tensorflow.keras.models import Sequential
 from tensorflow.keras.layers import Flatten, Dense, Reshape, Conv2D, MaxPool2D, Dropout
 from tensorflow.keras import layers
+from tensorflow.compat.v1.keras.backend import get_session
+import sys
 
 
 ##################################################################################
@@ -404,7 +406,7 @@ def displaySpectrogram(spec, spec_type="spectrogram", title='Spectrogram', hop_l
   plt.show()
 
 
-### Data normalisation ######################################################### TODO
+### Data normalisation 
 
 def normalise_dataset(dataset, minimum, maximum):
     """ Function normalises dataset with respect to custom minimum/maximum, which allows to normalise the test set with respect to min/max of the train set
@@ -503,6 +505,46 @@ def buildModel(submodels,
                 metrics=metrics)
   return model
 
+# reseting a model
+def reinitialiseModel(model):
+    """ Function reinitialises model to reset all the weights
+    Function is a modified function written by billbradley here: https://github.com/tensorflow/tensorflow/issues/48230
+    ---
+    args:
+        model:  model to be reinitialised -> keras.model
+    
+    """
+    weights = []
+    initializers = []
+    for submodel in model.layers:
+        # print(submodel)
+        if isinstance(submodel, keras.Sequential):
+            reinitialiseModel(submodel)
+        else:
+            layer = submodel
+            if isinstance(layer, (keras.layers.Dense, keras.layers.Conv2D)):
+                weights += [layer.kernel, layer.bias]
+                initializers += [layer.kernel_initializer, layer.bias_initializer]
+            elif isinstance(layer, keras.layers.BatchNormalization):
+                weights += [layer.gamma, layer.beta, layer.moving_mean, layer.moving_variance]
+                initializers += [layer.gamma_initializer,
+                                layer.beta_initializer,
+                                layer.moving_mean_initializer,
+                                layer.moving_variance_initializer]
+            elif isinstance(layer, keras.layers.Embedding):
+                weights += [layer.embeddings]
+                initializers += [layer.embeddings_initializer]
+            elif isinstance(layer, (keras.layers.Reshape, 
+                                    keras.layers.MaxPooling2D, 
+                                    keras.layers.Flatten, 
+                                    keras.layers.Dropout)):
+                # These layers don't need initialization
+                continue
+            else:
+                raise ValueError('Unhandled layer type: %s' % (type(layer)))
+    for w, init in zip(weights, initializers):
+        w.assign(init(w.shape, dtype=w.dtype))
+
 def KfoldValidationAETraining(model,
                               X_train,
                               k_folds = 1,
@@ -535,6 +577,8 @@ def KfoldValidationAETraining(model,
         [X_train[:i * num_val_samples], 
          X_train[(i + 1) * num_val_samples:]], 
         axis=0)
+    # reset model
+    reinitialiseModel(model)
 
     history = model.fit(partial_X_train, 
                         partial_X_train,
@@ -544,12 +588,15 @@ def KfoldValidationAETraining(model,
                         callbacks=callbacks, 
                         verbose=0)
     # getting number of epochs
-    epochs = len(history.history['loss'])
-
-    val_mse, val_mae = model.evaluate(X_val, X_val, verbose=0)
+    # epochs_at_finish = len(history.history['loss'])
+    epochs_at_min_loss = np.argmin(history.history['val_mse'])
+    
+    # val_mse, val_mae = model.evaluate(X_val, X_val, verbose=0)
+    val_mae = np.min(history.history['val_mae'])
+    
     # MAE being the most intuitive loss 
     all_scores.append(val_mae)
-    all_epochs.append(epochs)
+    all_epochs.append(epochs_at_min_loss)
 
   return np.mean(all_scores), np.ceil(np.mean(all_epochs))
 
@@ -678,12 +725,12 @@ def ExtractNotableFeatures(maxes_X_reduced, mins_X_reduced, threshold=0):
     return notable_features
 
 ### TSNE visualisation 
-def PrintMotorIdAnnotations(nb_of_motors, X_red):
+def printMotorIdAnnotations(nb_of_motors, data_reduced_2D):
     """ Function prints motors id on a TSNE visualisatin scatterplot
     ---
     args:
-        nb_of_motors:   total number of motors to be shown -> int
-        X_red:          matrix with features reduced by encoder -> np.ndarray
+        nb_of_motors:       total number of motors to be shown -> int
+        data_reduced_2D:    dataframe with features reduced in TSNE -> npd.DataFrame
     """
     for motorId in range(1, nb_of_motors):
         X_red = data_reduced_2D[data_reduced_2D.motorId == motorId]
@@ -934,7 +981,8 @@ def KfoldValidationCNNTraining(model,
                                epochs=100,
                                batch_size=16,
                                callbacks=None,
-                               shuffled_motor_list=[]):
+                               shuffled_motor_list=[],
+                               return_histories=False):
     """ Function performs a Kfold validation on the given model and dataset
     ---
     args:
@@ -947,9 +995,11 @@ def KfoldValidationCNNTraining(model,
         shuffled_motor_list:    default=[], custom shuffled list of motors given by the user 
                                 (can be used for tests or to reproduce the results from previous experiments)
                                 If left empty, then the list of shuffled motors is generated by the function -> list
+        return_accuracy_list:   default=False, set to True if you want all the scores returned in the list -> bool
     returns:
         mean_accuracy:  mean mean absolute error of all the trainings
-        epochs_number:  rounded mean number of epochs at whicj trainings were finished
+        epochs_number:  rounded median number of epochs at which trainings were finished
+        accuracies:     all accuracies, returned only if return_accuracy_list==True
     """
 
     if len(shuffled_motor_list) == 0:
@@ -960,9 +1010,12 @@ def KfoldValidationCNNTraining(model,
     nb_val_motors = len(all_train_motors) // k_folds
 
     all_scores = []
-    all_epochs = [] 
+    all_epochs = []
+    all_histories = []
     for i in range(k_folds):
-        print(f"fold: #{i+1}")
+        # animate the fold counter
+        sys.stdout.write('\r'+ f"fold: #{i+1}")
+        # print(f"fold: #{i+1}")
         # print(f"TestSet: {all_train_motors[:nb_val_motors]}")
         # split train and validation sets
         partial_df_train, df_val, _ = splitTrainTestByMotorId(df_train,
@@ -978,6 +1031,9 @@ def KfoldValidationCNNTraining(model,
         temp = np.copy(all_train_motors[:nb_val_motors])
         all_train_motors[:-nb_val_motors] = np.copy(all_train_motors[nb_val_motors:])
         all_train_motors[-nb_val_motors:] = temp
+        
+        # reset model
+        reinitialiseModel(model)
 
         history = model.fit(partial_X_train, 
                             partial_y_train,
@@ -987,14 +1043,23 @@ def KfoldValidationCNNTraining(model,
                             callbacks=callbacks, 
                             verbose=0)
         # getting number of epochs
-        epochs = len(history.history['loss']) 
-        val_loss, val_accuracy = model.evaluate(X_val, y_val, verbose=0)
-        # getting model Accuracy
-        all_scores.append(val_accuracy)
-        all_epochs.append(epochs) 
+        # epochs_at_finish = len(history.history['loss'])
+        epochs_best_accuracy = np.argmax(history.history['val_accuracy']) + 1
+        all_epochs.append(epochs_best_accuracy) 
 
-    print(f'accuracies: {all_scores}, mean: {np.mean(all_scores)}\nepochs: {all_epochs}, mean: {np.mean(all_epochs)}')
-    return np.mean(all_scores), int(np.ceil(np.mean(all_epochs)))
+        # getting model Accuracy
+        # val_loss, val_accuracy = model.evaluate(X_val, y_val, verbose=0)
+        val_accuracy = np.max(history.history['val_accuracy'])
+        all_scores.append(val_accuracy)
+        
+        # adding history to histories list
+        all_histories.append(history)
+
+    print(f'\naccuracies: {all_scores}, mean: {np.mean(all_scores)}\nepochs: {all_epochs}, median: {np.median(all_epochs)}')
+    if return_histories:
+        return np.mean(all_scores), int(np.ceil(np.median(all_epochs))), all_histories
+    else:    
+        return np.mean(all_scores), int(np.ceil(np.median(all_epochs)))
 
 
 ### Grid Search
@@ -1009,7 +1074,7 @@ def GridSearchCNN(params,
     ---
     args:
         params:     dataframe with parameters to get checked, 
-                    columns=['nb_of_layers', 'filter_numbers', 'activation', 'batch_size', 'epochs_nb']
+                    columns=['nb_of_layers', 'filter_numbers', 'activation', 'batch_size', 'dropouts']
                     -> pd.DataFrame
         df_train:   dataset used to train the model -> pd.DataFrame
         k_folds:    default=4, number of k_folds to be done durng cross validation
@@ -1028,7 +1093,7 @@ def GridSearchCNN(params,
 
     total_nb_of_models = len(params.activation)
 
-    results = pd.DataFrame(columns=['nb_of_layers', 'filter_numbers', 'activation', 'batch_size', 'epochs_nb'])
+    results = pd.DataFrame(columns=['nb_of_layers', 'filter_numbers', 'activation', 'batch_size', 'dropouts','epochs_nb', 'accuracy'])
     for i, model_params in params.iterrows():
         # iterations counter
         print(f'#{i+1}/{total_nb_of_models}')
@@ -1037,10 +1102,11 @@ def GridSearchCNN(params,
 
         nb_of_conv_layers = len(params.filter_numbers[i])
         middle_submodel = buildCNNMiddleSubmodel(nb_of_conv_layers=len(model_params.filter_numbers),
-                                         filter_numbers=model_params.filter_numbers,
-                                         kernel_sizes=[3 for i in range(nb_of_conv_layers)],
-                                         activations=[model_params.activation for i in range(nb_of_conv_layers)]
-                                         )
+                                                 filter_numbers=model_params.filter_numbers,
+                                                 kernel_sizes=[3 for i in range(nb_of_conv_layers)],
+                                                 activations=[model_params.activation for i in range(nb_of_conv_layers)],
+                                                 dropouts=model_params.dropouts
+                                                 )
         output_submodel = Dense(1, activation='sigmoid', name='output')
 
         model = buildModel([input_submodel, middle_submodel, output_submodel], 
@@ -1060,6 +1126,7 @@ def GridSearchCNN(params,
                   'filter_numbers': model_params.filter_numbers,
                   'activation': model_params.activation, 
                   'batch_size': model_params.batch_size,
+                  'dropouts': model_params.dropouts,
                   'epochs_nb': best_epochs_nb, 
                   'accuracy': accuracy}
         results = results.append(result, ignore_index=True)
@@ -1122,3 +1189,71 @@ def countPredictionsByMotorId(y, preds, motorIds):
     df_motors["prediction_confidence"] = df_motors[['good', 'bad']].max(axis=1) / (df_motors.good+df_motors.bad)
     
     return df_motors
+
+#
+def finalCrossValidationCNN(model,
+                            dataset,
+                            nb_test_motors=10,
+                            iter_nb=1,
+                            epochs=5,
+                            batch_size=16):
+    """ Function performs a final cross validation on the given model and full dataset, it does not include any validation during training 
+        and calculates the accuracies with respect to whole data for the motor
+    ---
+    args:
+        model:      model to be tested  -> keras.model
+        df_train:   full dataset  -> d.DataFrame
+        folds:      default=1, number of folds to be performed -> int
+        epochs:     default=5,  number of training epochs -> int
+        batch_size: defaulr=16, size of the training batch, should be power of 2 -> int
+        shuffled_motor_list:    default=[], custom shuffled list of motors given by the user 
+                                (can be used for tests or to reproduce the results from previous experiments)
+                                If left empty, then the list of shuffled motors is generated by the function -> list
+    
+    returns:
+        mean_accuracy:  mean mean absolute error of all the trainings
+        accuracies:     all accuracies
+    """ 
+
+    all_scores = []
+    all_tables = []
+    for i in range(iter_nb):
+        print(f"fold: #{i+1}")
+        # print(f"TestSet: {all_train_motors[:nb_test_motors]}")
+        # split train and test sets
+        partial_df_train, df_test, _ = splitTrainTestByMotorId(dataset,
+                                                                nb_of_test_motors=nb_test_motors,
+                                                                threshold=0.65)
+        partial_X_train, partial_y_train = convertDatasetToArrays(partial_df_train)
+        X_test, y_test, motorIds_test = convertDatasetToArrays(df_test, return_motorIds_array=True)
+        
+        # reset model
+        reinitialiseModel(model)
+
+        history = model.fit(partial_X_train, 
+                            partial_y_train,
+                            epochs=epochs,
+                            batch_size=batch_size,
+                            verbose=1
+                            )
+        # getting model Accuracy
+        test_loss, test_accuracy = model.evaluate(X_test, y_test, verbose=0)
+        print(f'Test accuracy (general, NOT w.r.t. motors!): {test_accuracy}')
+
+        # making predictions for current test subset
+        preds = model.predict(X_test)
+        preds_test_round = []
+        for pred in preds:
+            pred_round = 1 if pred >= 0.5 else 0
+            preds_test_round.append(pred_round)
+        # forming a count table for the results w.r.t. the motors
+        results_table = countPredictionsByMotorId(y_test, preds_test_round, motorIds_test)
+        all_tables.append(results_table)
+        # calculating accuarcies for final full predictions w.r.t motor
+        final_accuracy = (results_table.ground_truth == results_table.summed_prediction).astype(int).sum() / len(results_table.ground_truth)
+        print(f"Test accuracy (W.R.T motors): {final_accuracy}")
+        all_scores.append(final_accuracy)
+    
+    mean_accuracy = np.mean(all_scores)
+
+    return mean_accuracy, all_scores, all_tables
