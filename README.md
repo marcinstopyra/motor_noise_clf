@@ -61,7 +61,7 @@ Each training was performed with use of kFold validation. The training histories
 
 This effect was quite expected as the dataset is really small. To cope with this problem the dropout layers were tested.
 
-Final model was trained on the full train dataset and tested on test set resulting in TODO% accuracy.
+Final model was trained on the full train dataset and tested on test set resulting in 0.9685 accuracy.
 
 The custom accuracy was then introduced due to the fact that the final prediction of motor class is a sum of predictions made on all of the segments of the given motor noise audio. 
 An example of such prediction is shown in the table:
