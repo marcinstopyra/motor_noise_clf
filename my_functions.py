@@ -589,7 +589,7 @@ def KfoldValidationAETraining(model,
                         verbose=0)
     # getting number of epochs
     # epochs_at_finish = len(history.history['loss'])
-    epochs_at_min_loss = np.argmin(history.history['val_mse'])
+    epochs_at_min_loss = np.argmin(history.history['val_loss'])
     
     # val_mse, val_mae = model.evaluate(X_val, X_val, verbose=0)
     val_mae = np.min(history.history['val_mae'])

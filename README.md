@@ -38,6 +38,8 @@ Optimal AutoEncoder hyperparameters were found by performing grid search for sev
 Feature extraction was then performed on all samples with use of an Encoder submodel. Out of those features the notable features for motor classification was performed by rejecting the features which were always the same, no matter of motor class. These features were found by checking ranges of all features. For some of them the range was 0 meaning that this feature holds no information on motor class.
 
 On reduced dataset TSNE reduction was performed for better visualisation and then KMean clustering. The clustered data was then visualised on a heatmap showing how many samples from each motor were assigned to each cluster. Based on that the decision was made to change labels of several motors (on picture in blue circles)
+
+
 ![heatmap of clustered samples](/images/heatmap.png)
 
 ## Final Model Development
@@ -52,7 +54,9 @@ Convolutional Neural Network hyperparameters were optimised by checking several 
 2. batch size
 3. activation function
 
-Each training was performed with use of kFold validation. The training histories for the best model was then visualised, showing quick overfitting for some train-validation dataset splits. 
+Each training was performed with use of kFold validation. The training histories for the best model was then visualised, showing quick overfitting for some train-validation dataset splits.
+
+
 ![training histories](/images/training_history.png)
 
 This effect was quite expected as the dataset is really small. To cope with this problem the dropout layers were tested.
@@ -61,6 +65,8 @@ Final model was trained on the full train dataset and tested on test set resulti
 
 The custom accuracy was then introduced due to the fact that the final prediction of motor class is a sum of predictions made on all of the segments of the given motor noise audio. 
 An example of such prediction is shown in the table:
+
+
 ![results table](/images/pred_table.png)
 
 Because of dataset small size the huge variation of results was expected depending on train-test split. Therefore, the final model was cross validated on several splits (15 random train-test splits). The results of cross validations:
