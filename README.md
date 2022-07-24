@@ -40,7 +40,7 @@ Feature extraction was then performed on all samples with use of an Encoder subm
 On reduced dataset TSNE reduction was performed for better visualisation and then KMean clustering. The clustered data was then visualised on a heatmap showing how many samples from each motor were assigned to each cluster. Based on that the decision was made to change labels of several motors (on picture in blue circles)
 
 
-![heatmap of clustered samples](/images/heatmap.png)
+![heatmap of clustered samples](/images/heatmap1.png)
 
 ## Final Model Development
 ### Dataset splitting
@@ -57,7 +57,7 @@ Convolutional Neural Network hyperparameters were optimised by checking several 
 Each training was performed with use of kFold validation. The training histories for the best model was then visualised, showing quick overfitting for some train-validation dataset splits.
 
 
-![training histories](/images/training_history.png)
+![training histories](/images/training_history1.png)
 
 This effect was quite expected as the dataset is really small. To cope with this problem the dropout layers were tested.
 
